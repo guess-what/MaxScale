@@ -32,6 +32,7 @@
 #include <maxscale/log_manager.h>
 #include <maxscale/platform.h>
 #include <maxscale/query_classifier.h>
+#include <maxscale/worker.h>
 #include <maxscale/resultset.h>
 #include <maxscale/server.h>
 #include <maxscale/session.h>
@@ -557,11 +558,12 @@ poll_resolve_error(int fd, int errornum, int op)
  * @param arg   The thread ID passed as a void * to satisfy the threading package
  */
 void
-poll_waitevents(void *arg)
+poll_waitevents(MXS_WORKER *worker)
 {
+    thread_id = mxs_worker_id(worker);
+
     struct epoll_event events[MAX_EVENTS];
     int i, nfds, timeout_bias = 1;
-    thread_id = (intptr_t)arg;
     int poll_spins = 0;
 
     thread_data[thread_id].state = THREAD_IDLE;
