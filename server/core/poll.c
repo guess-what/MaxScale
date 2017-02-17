@@ -85,7 +85,7 @@ int max_poll_sleep;
  */
 #define MUTEX_EPOLL     0
 
-thread_local int thread_id; /**< This thread's ID */
+thread_local int current_thread_id; /**< This thread's ID */
 static int *epoll_fd;    /*< The epoll file descriptor */
 static int next_epoll_fd = 0; /*< Which thread handles the next DCB */
 
@@ -318,7 +318,7 @@ static int add_fd_to_workers(int fd, uint32_t events, MXS_POLL_DATA* data)
 
     ev.events = events;
     ev.data.ptr = data;
-    data->thread.id = 0; // In this case, the data will appear to be on the main thread.
+    data->thread.id = current_thread_id; // The DCB will appear on the list of the calling thread.
 
     int stored_errno = 0;
     int rc = 0;
@@ -559,7 +559,10 @@ poll_resolve_error(int fd, int errornum, int op)
 void
 poll_waitevents(MXS_WORKER *worker)
 {
-    thread_id = mxs_worker_id(worker);
+    current_thread_id = mxs_worker_id(worker);
+
+    // current_thread_id is thread_local so, just in case, we copy it to a local variable.
+    int thread_id = current_thread_id;
 
     struct epoll_event events[MAX_EVENTS];
     int i, nfds, timeout_bias = 1;
@@ -1218,7 +1221,7 @@ void poll_send_message(enum poll_message msg, void *data)
 
     for (int i = 0; i < nthr; i++)
     {
-        if (i != thread_id)
+        if (i != current_thread_id)
         {
             while (poll_msg[i] & msg)
             {
@@ -1233,6 +1236,8 @@ void poll_send_message(enum poll_message msg, void *data)
 
 static void poll_check_message()
 {
+    int thread_id = current_thread_id;
+
     if (poll_msg[thread_id] & POLL_MSG_CLEAN_PERSISTENT)
     {
         SERVER *server = (SERVER*)poll_msg_data;
