@@ -73,12 +73,6 @@ RegexHintFilter::RegexHintFilter(string user, SourceHost* source,
 RegexHintFilter::~RegexHintFilter()
 {
     delete m_source;
-    pcre2_code_free(m_regex);
-    if (m_source)
-    {
-        MXS_FREE(m_source->address);
-    }
-    MXS_FREE(m_source);
     for (unsigned int i = 0; i < m_mapping.size(); i++)
     {
         pcre2_code_free(m_mapping.at(i).m_regex);
@@ -158,11 +152,11 @@ RegexHintFSession* RegexHintFilter::newSession(MXS_SESSION* session)
     bool session_active = true;
 
     /* Check client IP against 'source' host option */
-    if (m_source && m_source->m_address &&
+    if (m_source && m_source->m_address.length() &&
         (remote = session_get_remote(session)) != NULL)
     {
         session_active =
-            check_source_host(remote, &(session->client_dcb->ipv4));
+            check_source_host(remote, &(session->client_dcb->ip));
     }
 
     /* Check client user against 'user' option */
@@ -319,7 +313,7 @@ void RegexHintFilter::diagnostics(DCB* dcb)
     {
         dcb_printf(dcb,
                    "\t\tReplacement limited to connections from     %s\n",
-                   m_source->m_address);
+                   m_source->m_address.c_str());
     }
     if (m_user.length())
     {
@@ -470,17 +464,17 @@ void RegexHintFilter::form_regex_server_mapping(MXS_CONFIG_PARAMETER* params, in
  * @param ipv4        The client IPv4 struct
  * @return            1 for match, 0 otherwise
  */
-int RegexHintFilter::check_source_host(const char* remote, const struct sockaddr_in* ipv4)
+int RegexHintFilter::check_source_host(const char* remote, const struct sockaddr_storage *ip)
 {
     int ret = 0;
     struct sockaddr_in check_ipv4;
 
-    memcpy(&check_ipv4, ipv4, sizeof(check_ipv4));
+    memcpy(&check_ipv4, ip, sizeof(check_ipv4));
 
     switch (m_source->m_netmask)
     {
     case 32:
-        ret = strcmp(m_source->m_address, remote) == 0 ? 1 : 0;
+        ret = (m_source->m_address == remote) ? 1 : 0;
         break;
     case 24:
         /* Class C check */
@@ -507,7 +501,7 @@ int RegexHintFilter::check_source_host(const char* remote, const struct sockaddr
         MXS_INFO("Client IP %s matches host source %s%s",
                  remote,
                  m_source->m_netmask < 32 ? "with wildcards " : "",
-                 m_source->m_address);
+                 m_source->m_address.c_str());
     }
 
     return ret;
@@ -593,15 +587,14 @@ SourceHost* RegexHintFilter::set_source_address(const char* input_host)
 
     if (!validate_ip_address(input_host))
     {
-        MXS_WARNING("The given 'source' parameter source=%s"
-                    " is not a valid IP address: it will not be used.",
-                    input_host);
+        MXS_WARNING("The given 'source' parameter '%s'"
+                    " is not a valid IPv4 address.", input_host);
 
-        source_host->m_address = NULL;
-        return source_host;
+        delete source_host;
+        return NULL;
     }
 
-    source_host->m_address = input_host;
+    source_host->m_address.assign(input_host);
 
     /* If no wildcards don't check it, set netmask to 32 and return */
     if (!strchr(input_host, '%'))
@@ -646,7 +639,7 @@ SourceHost* RegexHintFilter::set_source_address(const char* input_host)
     if (rc == 0)
     {
         ss_dassert(ai->ai_family == AF_INET);
-        memcpy(&source_host->ipv4, ai->ai_addr, ai->ai_addrlen);
+        memcpy(&source_host->m_ipv4, ai->ai_addr, ai->ai_addrlen);
 
         /* if netmask < 32 there are % wildcards */
         if (source_host->m_netmask < 32)
@@ -655,15 +648,15 @@ SourceHost* RegexHintFilter::set_source_address(const char* input_host)
             source_host->m_ipv4.sin_addr.s_addr &= 0x00FFFFFF;
         }
 
-        MXS_INFO("Input %s is valid with netmask %d", source_host->address, source_host->netmask);
+        MXS_INFO("Input %s is valid with netmask %d", source_host->m_address.c_str(),
+                 source_host->m_netmask);
         freeaddrinfo(ai);
     }
     else
     {
         MXS_WARNING("Found invalid IP address for parameter 'source=%s': %s",
                     input_host, gai_strerror(rc));
-        MXS_FREE(source_host->address);
-        MXS_FREE(source_host);
+        delete source_host;
         return NULL;
     }
 
